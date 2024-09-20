@@ -1,0 +1,127 @@
+name: Build and Release sysIDE
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  NODE_VERSION: '16'
+  ARTIFACT_NAME: 'sysIDE-vscode'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Use Node.js ${{ env.NODE_VERSION }}
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    - name: Install dependencies
+      run: |
+        yarn
+        yarn run gulp vscode-linux-x64-min
+        yarn run gulp vscode-linux-arm64-min
+        yarn run gulp vscode-darwin-x64-min
+        yarn run gulp vscode-darwin-arm64-min
+        yarn run gulp vscode-win32-x64-min
+        yarn run gulp vscode-win32-arm64-min
+
+    - name: Get version
+      id: get_version
+      run: echo "version=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ steps.get_version.outputs.version }}
+        release_name: Release v${{ steps.get_version.outputs.version }}
+        draft: false
+        prerelease: false
+
+    - name: Upload Linux x64 Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./VSCode-linux-x64/vscode-linux-x64.tar.gz
+        asset_name: ${{ env.ARTIFACT_NAME }}-linux-x64.tar.gz
+        asset_content_type: application/gzip
+
+    - name: Upload Linux ARM64 Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./VSCode-linux-arm64/vscode-linux-arm64.tar.gz
+        asset_name: ${{ env.ARTIFACT_NAME }}-linux-arm64.tar.gz
+        asset_content_type: application/gzip
+
+    - name: Upload macOS x64 Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./VSCode-darwin-x64/vscode-darwin-x64.zip
+        asset_name: ${{ env.ARTIFACT_NAME }}-darwin-x64.zip
+        asset_content_type: application/zip
+
+    - name: Upload macOS ARM64 Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./VSCode-darwin-arm64/vscode-darwin-arm64.zip
+        asset_name: ${{ env.ARTIFACT_NAME }}-darwin-arm64.zip
+        asset_content_type: application/zip
+
+    - name: Upload Windows x64 Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./VSCode-win32-x64/vscode-win32-x64.zip
+        asset_name: ${{ env.ARTIFACT_NAME }}-win32-x64.zip
+        asset_content_type: application/zip
+
+    - name: Upload Windows ARM64 Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ./VSCode-win32-arm64/vscode-win32-arm64.zip
+        asset_name: ${{ env.ARTIFACT_NAME }}-win32-arm64.zip
+        asset_content_type: application/zip
+
+    - name: Upload to Azure Blob Storage
+      uses: azure/CLI@v1
+      env:
+        AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+      with:
+        inlineScript: |
+          if [ -z "$AZURE_STORAGE_CONNECTION_STRING" ]; then
+            echo "Error: AZURE_STORAGE_CONNECTION_STRING is empty"
+            exit 1
+          fi
+          
+          echo "Uploading VSIX files..."
+          az storage blob upload-batch --source . --destination vscode-extension --pattern "VSCode-*/*.{tar.gz,zip}" --overwrite
+
+          echo "Creating and uploading version.txt..."
+          echo "v${{ steps.get_version.outputs.version }}" > version.txt
+          az storage blob upload --container-name vscode-extension --file version.txt --name version.txt --overwrite
+          
+          echo "Upload completed successfully"
